@@ -1,0 +1,1872 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>多人骰子金币游戏 - 线上联机版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#3b82f6',
+                        secondary: '#10b981',
+                        accent: '#8b5cf6',
+                        dark: '#1f2937',
+                        light: '#f3f4f6',
+                        player1: '#3b82f6',
+                        player2: '#10b981',
+                        player3: '#f59e0b',
+                        player4: '#ef4444'
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                    },
+                    animation: {
+                        'bounce-slow': 'bounce 2s infinite',
+                        'spin-slow': 'spin 3s linear infinite',
+                    }
+                }
+            }
+        }
+    </script>
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .text-shadow {
+                text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+            }
+            .dice-shadow {
+                box-shadow: 0 4px 0 rgba(0, 0, 0, 0.3);
+            }
+            .glass {
+                background: rgba(255, 255, 255, 0.25);
+                backdrop-filter: blur(10px);
+                border: 1px solid rgba(255, 255, 255, 0.18);
+            }
+        }
+        
+        /* 骰子样式 */
+        .dice {
+            width: 40px;
+            height: 40px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 16px;
+            transition: all 0.2s ease;
+            cursor: pointer;
+        }
+        
+        .dice:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 6px 0 rgba(0, 0, 0, 0.3);
+        }
+        
+        .dice:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 0 rgba(0, 0, 0, 0.3);
+        }
+        
+        /* 金币动画 */
+        @keyframes coinFlip {
+            0% { transform: rotateY(0deg); }
+            50% { transform: rotateY(180deg); }
+            100% { transform: rotateY(360deg); }
+        }
+        
+        .coin-animation {
+            animation: coinFlip 1s ease-in-out;
+        }
+        
+        /* 进度条动画 */
+        @keyframes progressFill {
+            from { width: 0%; }
+            to { width: var(--progress-width); }
+        }
+        
+        .progress-bar {
+            animation: progressFill 0.8s ease-out forwards;
+        }
+        
+        /* 玩家颜色 */
+        .player-color-1 { background-color: theme('colors.player1'); }
+        .player-color-2 { background-color: theme('colors.player2'); }
+        .player-color-3 { background-color: theme('colors.player3'); }
+        .player-color-4 { background-color: theme('colors.player4'); }
+        
+        .player-bg-1 { background-color: rgba(59, 130, 246, 0.1); }
+        .player-bg-2 { background-color: rgba(16, 185, 129, 0.1); }
+        .player-bg-3 { background-color: rgba(245, 158, 11, 0.1); }
+        .player-bg-4 { background-color: rgba(239, 68, 68, 0.1); }
+        
+        .player-border-1 { border-color: theme('colors.player1'); }
+        .player-border-2 { border-color: theme('colors.player2'); }
+        .player-border-3 { border-color: theme('colors.player3'); }
+        .player-border-4 { border-color: theme('colors.player4'); }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-blue-50 to-purple-50 min-h-screen">
+    <!-- 游戏模式选择弹窗 -->
+    <div id="mode-select-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-xl p-8 max-w-md w-full mx-4 transform transition-all scale-100 opacity-100">
+            <div class="text-center">
+                <h2 class="text-3xl font-bold mb-6 text-primary">选择游戏模式</h2>
+                <p class="text-gray-600 mb-8">请选择您想要的游戏模式</p>
+                <div class="space-y-4">
+                    <button id="local-mode-btn" class="w-full bg-primary hover:bg-blue-700 text-white py-4 px-6 rounded-lg font-bold transition-all transform hover:scale-105 active:scale-95">
+                        <i class="fa fa-users mr-2"></i> 本地多人模式
+                    </button>
+                    <button id="online-mode-btn" class="w-full bg-purple-600 hover:bg-purple-700 text-white py-4 px-6 rounded-lg font-bold transition-all transform hover:scale-105 active:scale-95">
+                        <i class="fa fa-globe mr-2"></i> 线上联机模式
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 线上模式房间管理弹窗 -->
+    <div id="online-room-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white rounded-xl p-8 max-w-md w-full mx-4 transform transition-all scale-95 opacity-0">
+            <div class="text-center">
+                <h2 class="text-2xl font-bold mb-4 text-purple-600">线上房间</h2>
+                <div class="space-y-6">
+                    <!-- 创建房间 -->
+                    <div class="space-y-3">
+                        <h3 class="text-lg font-semibold text-gray-700">创建新房间</h3>
+                        <button id="create-room-btn" class="w-full bg-green-600 hover:bg-green-700 text-white py-3 px-6 rounded-lg font-bold transition-all transform hover:scale-105 active:scale-95">
+                            <i class="fa fa-plus-circle mr-2"></i> 创建房间
+                        </button>
+                    </div>
+                    
+                    <!-- 加入房间 -->
+                    <div class="space-y-3">
+                        <h3 class="text-lg font-semibold text-gray-700">加入房间</h3>
+                        <div class="flex space-x-2">
+                            <input type="text" id="room-code-input" class="flex-1 border-2 border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:border-purple-500" placeholder="输入房间代码">
+                            <button id="join-room-btn" class="bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded-lg font-bold transition-all transform hover:scale-105 active:scale-95">
+                                <i class="fa fa-sign-in mr-1"></i> 加入
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- 房间列表 -->
+                    <div class="space-y-3">
+                        <h3 class="text-lg font-semibold text-gray-700">可用房间</h3>
+                        <div id="room-list" class="bg-gray-50 rounded-lg p-3 max-h-40 overflow-y-auto">
+                            <div class="text-gray-400 italic text-sm">暂无可用房间</div>
+                        </div>
+                    </div>
+                    
+                    <!-- 我的房间信息 -->
+                    <div id="my-room-info" class="hidden space-y-2">
+                        <div class="bg-blue-50 rounded-lg p-3">
+                            <div class="flex justify-between items-center">
+                                <span class="font-semibold text-blue-800">我的房间</span>
+                                <span id="my-room-code" class="text-sm bg-blue-200 text-blue-800 px-2 py-1 rounded-full font-mono">ABC123</span>
+                            </div>
+                            <div class="text-sm text-blue-600 mt-1">
+                                <span id="room-players-count">0</span> 名玩家已加入
+                            </div>
+                        </div>
+                        <div class="space-y-2">
+                            <button id="start-online-game-btn" class="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg font-bold transition-all transform hover:scale-105 active:scale-95">
+                                <i class="fa fa-play-circle mr-2"></i> 开始游戏
+                            </button>
+                            <button id="leave-room-btn" class="w-full bg-red-600 hover:bg-red-700 text-white py-2 px-4 rounded-lg font-bold transition-all transform hover:scale-105 active:scale-95">
+                                <i class="fa fa-sign-out mr-2"></i> 离开房间
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <button id="back-to-mode-btn" class="w-full bg-gray-200 hover:bg-gray-300 text-gray-800 py-2 px-4 rounded-lg font-bold transition-all transform hover:scale-105 active:scale-95">
+                        <i class="fa fa-arrow-left mr-2"></i> 返回
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 人数选择弹窗 -->
+    <div id="player-count-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white rounded-xl p-8 max-w-md w-full mx-4 transform transition-all scale-95 opacity-0">
+            <div class="text-center">
+                <h2 class="text-3xl font-bold mb-6 text-primary">选择游戏人数</h2>
+                <p class="text-gray-600 mb-8">请选择参与游戏的玩家数量（2-4人）</p>
+                <div class="grid grid-cols-3 gap-4">
+                    <button class="player-count-btn py-4 px-6 rounded-lg border-2 player-border-1 hover:bg-blue-50 transition-colors" data-count="2">
+                        <div class="text-2xl font-bold text-player1">2人</div>
+                    </button>
+                    <button class="player-count-btn py-4 px-6 rounded-lg border-2 player-border-3 hover:bg-yellow-50 transition-colors" data-count="3">
+                        <div class="text-2xl font-bold text-player3">3人</div>
+                    </button>
+                    <button class="player-count-btn py-4 px-6 rounded-lg border-2 player-border-4 hover:bg-red-50 transition-colors" data-count="4">
+                        <div class="text-2xl font-bold text-player4">4人</div>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- AI设置弹窗 -->
+    <div id="ai-setup-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white rounded-xl p-8 max-w-md w-full mx-4 transform transition-all scale-95 opacity-0">
+            <div class="text-center">
+                <h2 class="text-2xl font-bold mb-4 text-primary">设置玩家类型</h2>
+                <p class="text-gray-600 mb-6" id="ai-setup-player-text">请设置玩家1的类型</p>
+                <div class="space-y-4">
+                    <button id="human-btn" class="w-full bg-primary hover:bg-blue-700 text-white py-3 px-6 rounded-lg font-bold transition-all transform hover:scale-105 active:scale-95">
+                        <i class="fa fa-user mr-2"></i> 人类玩家
+                    </button>
+                    <div class="space-y-2">
+                        <button id="ai-easy-btn" class="w-full bg-gray-200 hover:bg-gray-300 text-gray-800 py-2 px-6 rounded-lg font-bold transition-all transform hover:scale-105 active:scale-95">
+                            <i class="fa fa-robot mr-2"></i> AI玩家 - 简单
+                        </button>
+                        <button id="ai-medium-btn" class="w-full bg-gray-200 hover:bg-gray-300 text-gray-800 py-2 px-6 rounded-lg font-bold transition-all transform hover:scale-105 active:scale-95">
+                            <i class="fa fa-robot mr-2"></i> AI玩家 - 中等
+                        </button>
+                        <button id="ai-hard-btn" class="w-full bg-gray-200 hover:bg-gray-300 text-gray-800 py-2 px-6 rounded-lg font-bold transition-all transform hover:scale-105 active:scale-95">
+                            <i class="fa fa-robot mr-2"></i> AI玩家 - 困难
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="container mx-auto px-4 py-8">
+        <!-- 游戏标题 -->
+        <header class="text-center mb-6">
+            <h1 class="text-3xl md:text-4xl font-bold text-primary text-shadow mb-2">骰子金币游戏</h1>
+            <p class="text-gray-600 text-base" style="color: rgba(30, 122, 250, 0.85); font-size: 14px;">掷骰子、抢点数、赢金币！（m为剩余骰子数）</p>
+        </header>
+
+        <!-- 游戏状态面板 -->
+        <div class="glass rounded-xl p-4 mb-6 shadow-lg">
+            <div id="player-stats" class="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                <!-- 玩家状态将通过JavaScript动态生成 -->
+            </div>
+        </div>
+
+        <!-- 游戏主区域 -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <!-- 左侧：游戏进度 -->
+            <div class="lg:col-span-2">
+                <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+                    <div class="bg-gradient-to-r from-primary to-accent text-white p-4">
+                        <h2 class="text-xl font-bold">游戏进度</h2>
+                    </div>
+                    <div class="p-4">
+                        <div id="progress-container" class="space-y-6">
+                            <!-- 进度条将通过JavaScript动态生成 -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右侧：操作区域 -->
+            <div class="lg:col-span-1">
+                <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+                    <div class="bg-gradient-to-r from-secondary to-accent text-white p-4">
+                        <h2 class="text-xl font-bold">当前回合</h2>
+                    </div>
+                    <div class="p-4">
+                        <!-- 当前玩家指示 -->
+                        <div id="current-player" class="text-center mb-6">
+                            <div class="inline-block bg-player1 text-white px-6 py-3 rounded-full text-xl font-bold">
+                                玩家1的回合
+                            </div>
+                        </div>
+
+                        <!-- 骰子区域 -->
+                        <div id="dice-container" class="mb-4">
+                            <h3 class="text-base font-semibold mb-2">掷出的骰子：</h3>
+                            <div id="dice-roll-result" class="flex flex-wrap gap-2 justify-center min-h-[60px] items-center">
+                                <div class="text-gray-400 italic">点击"掷骰子"按钮开始</div>
+                            </div>
+                        </div>
+
+                        <!-- 操作按钮 -->
+                        <div id="action-buttons" class="space-y-4">
+                            <button id="roll-dice-btn" class="w-full bg-primary hover:bg-blue-700 text-white py-3 px-6 rounded-lg font-bold transition-all transform hover:scale-105 active:scale-95 flex items-center justify-center">
+                                <i class="fa fa-random mr-2"></i> 掷骰子
+                            </button>
+                            
+                            <div id="selection-buttons" class="hidden space-y-4">
+                                <div>
+                                    <label class="block text-gray-700 mb-2 font-medium">选择点数：</label>
+                                    <div id="dice-selection" class="flex flex-wrap gap-2 justify-center">
+                                        <!-- 点数选择按钮将动态生成 -->
+                                    </div>
+                                </div>
+                                
+                                <div>
+                                    <label class="block text-gray-700 mb-2 font-medium">选择数量：</label>
+                                    <div id="count-selection" class="flex flex-wrap gap-2 justify-center">
+                                        <!-- 数量选择按钮将动态生成 -->
+                                    </div>
+                                </div>
+                                
+                                <button id="confirm-btn" class="w-full bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded-lg font-bold transition-all transform hover:scale-105 active:scale-95 text-sm">
+                                    确认选择
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 游戏结果弹窗 -->
+        <div id="result-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
+            <div class="bg-white rounded-xl p-6 max-w-2xl w-full mx-4 transform transition-all scale-95 opacity-0" id="modal-content">
+                <div class="text-center">
+                    <h2 class="text-2xl font-bold mb-4" id="result-title">游戏结束</h2>
+                    
+                    <!-- 计算过程 -->
+                    <div id="calculation-process" class="mb-8">
+                        <h3 class="text-lg font-bold mb-3 text-gray-700">计算过程</h3>
+                        <div class="bg-gray-50 rounded-lg p-4 max-h-60 overflow-y-auto">
+                            <table class="w-full text-sm">
+                                <thead>
+                                    <tr class="border-b">
+                                        <th class="py-2 text-left">点数</th>
+                                        <th class="py-2 text-center">玩家1</th>
+                                        <th class="py-2 text-center">玩家2</th>
+                                        <th class="py-2 text-center">玩家3</th>
+                                        <th class="py-2 text-center">玩家4</th>
+                                        <th class="py-2 text-center">金币</th>
+                                        <th class="py-2 text-center">分配</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="calculation-body">
+                                    <!-- 计算过程将动态生成 -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    
+                    <!-- 最终结果 -->
+                    <div id="final-results" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+                        <!-- 结果将动态生成 -->
+                    </div>
+                    
+                    <button id="new-game-btn" class="bg-primary hover:bg-blue-700 text-white py-2 px-6 rounded-lg font-bold text-base transition-all transform hover:scale-105 active:scale-95">
+                        开始新游戏
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 游戏数据
+        const gameData = {
+            // 基础点数列表
+            baseDiceLists: {
+                1: [], 2: [], 3: [], 4: [], 5: [], 6: []
+            },
+            
+            // 玩家专属列表
+            playerDiceLists: {},
+            
+            // 玩家信息
+            playerInfo: [],
+            
+            // 游戏状态
+            playerCount: 2,
+            currentPlayer: 1,
+            m: [],
+            gameOver: false,
+            tempDice: [],
+            selectedDice: null,
+            selectedCount: null,
+            
+            // 总金币
+            totalGold: [],
+            
+            // AI设置
+            currentSetupPlayer: 1,
+            
+            // 线上模式相关
+            gameMode: 'local', // 'local' 或 'online'
+            socket: null,
+            roomCode: null,
+            isHost: false,
+            myPlayerId: null,
+            connectedPlayers: []
+        };
+
+        // DOM元素
+        const elements = {
+            // 模式选择
+            modeSelectModal: document.getElementById('mode-select-modal'),
+            localModeBtn: document.getElementById('local-mode-btn'),
+            onlineModeBtn: document.getElementById('online-mode-btn'),
+            
+            // 线上模式房间管理
+            onlineRoomModal: document.getElementById('online-room-modal'),
+            createRoomBtn: document.getElementById('create-room-btn'),
+            joinRoomBtn: document.getElementById('join-room-btn'),
+            roomCodeInput: document.getElementById('room-code-input'),
+            roomList: document.getElementById('room-list'),
+            myRoomInfo: document.getElementById('my-room-info'),
+            myRoomCode: document.getElementById('my-room-code'),
+            roomPlayersCount: document.getElementById('room-players-count'),
+            startOnlineGameBtn: document.getElementById('start-online-game-btn'),
+            leaveRoomBtn: document.getElementById('leave-room-btn'),
+            backToModeBtn: document.getElementById('back-to-mode-btn'),
+            
+            // 本地模式
+            playerCountModal: document.getElementById('player-count-modal'),
+            playerCountBtns: document.querySelectorAll('.player-count-btn'),
+            playerStats: document.getElementById('player-stats'),
+            currentPlayer: document.getElementById('current-player'),
+            diceRollResult: document.getElementById('dice-roll-result'),
+            rollDiceBtn: document.getElementById('roll-dice-btn'),
+            selectionButtons: document.getElementById('selection-buttons'),
+            diceSelection: document.getElementById('dice-selection'),
+            countSelection: document.getElementById('count-selection'),
+            confirmBtn: document.getElementById('confirm-btn'),
+            progressContainer: document.getElementById('progress-container'),
+            resultModal: document.getElementById('result-modal'),
+            modalContent: document.getElementById('modal-content'),
+            resultTitle: document.getElementById('result-title'),
+            calculationBody: document.getElementById('calculation-body'),
+            finalResults: document.getElementById('final-results'),
+            newGameBtn: document.getElementById('new-game-btn'),
+            aiSetupModal: document.getElementById('ai-setup-modal'),
+            aiSetupPlayerText: document.getElementById('ai-setup-player-text'),
+            humanBtn: document.getElementById('human-btn'),
+            aiEasyBtn: document.getElementById('ai-easy-btn'),
+            aiMediumBtn: document.getElementById('ai-medium-btn'),
+            aiHardBtn: document.getElementById('ai-hard-btn')
+        };
+
+        // 玩家颜色配置
+        const playerColors = {
+            1: { bg: 'player-bg-1', border: 'player-border-1', color: 'player-color-1', text: 'text-player1' },
+            2: { bg: 'player-bg-2', border: 'player-border-2', color: 'player-color-2', text: 'text-player2' },
+            3: { bg: 'player-bg-3', border: 'player-border-3', color: 'player-color-3', text: 'text-player3' },
+            4: { bg: 'player-bg-4', border: 'player-border-4', color: 'player-color-4', text: 'text-player4' }
+        };
+
+        // 初始化游戏
+        function initGame() {
+            // 重置游戏数据
+            gameData.baseDiceLists = { 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] };
+            gameData.playerDiceLists = {};
+            gameData.playerInfo = [];
+            gameData.m = [];
+            gameData.totalGold = [];
+            
+            gameData.currentPlayer = 1;
+            gameData.gameOver = false;
+            gameData.tempDice = [];
+            gameData.selectedDice = null;
+            gameData.selectedCount = null;
+            
+            // 开始AI设置流程
+            gameData.currentSetupPlayer = 1;
+            showAiSetupModal();
+            
+            // 隐藏结果弹窗
+            elements.resultModal.classList.add('hidden');
+        }
+        
+        // 显示AI设置弹窗
+        function showAiSetupModal() {
+            elements.aiSetupPlayerText.textContent = `请设置玩家${gameData.currentSetupPlayer}的类型`;
+            elements.aiSetupModal.classList.remove('hidden');
+            setTimeout(() => {
+                const modalContent = elements.aiSetupModal.querySelector('div');
+                modalContent.classList.remove('scale-95', 'opacity-0');
+                modalContent.classList.add('scale-100', 'opacity-100');
+            }, 10);
+        }
+        
+        // 完成AI设置
+        function completeAiSetup() {
+            // 隐藏AI设置弹窗
+            elements.aiSetupModal.classList.add('hidden');
+            
+            // 初始化玩家数据
+            for (let i = 1; i <= gameData.playerCount; i++) {
+                gameData.playerDiceLists[i] = { 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] };
+                gameData.m.push(8);
+                gameData.totalGold.push(0);
+            }
+
+            // 生成基础金币
+            const goldPerList = 2;
+            const minGold = 3;
+            const maxGold = 8;
+
+            for (let diceNum = 1; diceNum <= 6; diceNum++) {
+                for (let i = 0; i < goldPerList; i++) {
+                    const gold = Math.floor(Math.random() * (maxGold - minGold + 1)) + minGold;
+                    gameData.baseDiceLists[diceNum].push(gold);
+                }
+            }
+
+            // 更新UI
+            renderPlayerStats();
+            updateUI();
+            renderProgress();
+            
+            // 显示初始状态
+            elements.rollDiceBtn.classList.remove('hidden');
+            elements.selectionButtons.classList.add('hidden');
+            elements.diceRollResult.innerHTML = '<div class="text-gray-400 italic">点击"掷骰子"按钮开始</div>';
+            
+            // 显示游戏说明
+            const aiCount = gameData.playerInfo.filter(p => p.isAI).length;
+            showMessage(`游戏开始！当前${gameData.playerCount}人游戏（${aiCount}个AI），金币将实时更新`);
+            
+            // 如果第一个玩家是AI，自动开始回合
+            checkAndStartAiTurn();
+        }
+        
+        // 检查并开始AI回合或等待其他玩家
+        function checkAndStartAiTurn() {
+            const currentPlayerInfo = gameData.playerInfo[gameData.currentPlayer - 1];
+            const currentM = gameData.m[gameData.currentPlayer - 1];
+            
+            if (gameData.gameMode === 'online') {
+                // 线上模式：检查是否是我的回合
+                const isMyTurn = currentPlayerInfo && currentPlayerInfo.id === gameData.socket?.id;
+                
+                if (isMyTurn) {
+                    // 是我的回合，检查是否有骰子数
+                    if (currentM <= 0) {
+                        showMessage(`您没有可用的骰子数，自动切换回合！`);
+                        setTimeout(() => {
+                            nextPlayer();
+                        }, 1500);
+                    } else {
+                        // 有骰子数，等待玩家操作
+                        showMessage('轮到您了，请掷骰子！');
+                    }
+                } else {
+                    // 不是我的回合，等待其他玩家操作
+                    const playerName = currentPlayerInfo && currentPlayerInfo.name ? currentPlayerInfo.name : `玩家${gameData.currentPlayer}`;
+                    showMessage(`等待${playerName}操作...`);
+                }
+            } else {
+                // 本地模式：检查是否是AI回合
+                if (currentPlayerInfo && currentPlayerInfo.isAI) {
+                    // 检查AI是否有可用的骰子数
+                    if (currentM <= 0) {
+                        showMessage(`AI玩家${gameData.currentPlayer}没有可用的骰子数，自动切换回合！`);
+                        setTimeout(() => {
+                            nextPlayer();
+                        }, 1500);
+                    } else {
+                        // 延迟一秒开始AI回合，让玩家看清楚
+                        setTimeout(() => {
+                            rollDice();
+                        }, 1000);
+                    }
+                }
+            }
+        }
+
+        // 渲染玩家状态面板
+        function renderPlayerStats() {
+            elements.playerStats.innerHTML = '';
+            
+            for (let i = 1; i <= gameData.playerCount; i++) {
+                const colors = playerColors[i];
+                const playerInfo = gameData.playerInfo[i - 1];
+                const isAI = playerInfo ? playerInfo.isAI : false;
+                const aiDifficulty = playerInfo ? playerInfo.difficulty : null;
+                const playerName = playerInfo && playerInfo.name ? playerInfo.name : `玩家${i}`;
+                const isMe = gameData.gameMode === 'online' && playerInfo && playerInfo.id === gameData.socket?.id;
+                
+                const playerStat = document.createElement('div');
+                playerStat.className = `bg-white rounded-lg p-4 border-2 ${colors.border} ${colors.bg} ${isMe ? 'ring-2 ring-blue-400' : ''}`;
+                
+                let playerTitle = playerName;
+                if (isAI) {
+                    playerTitle += `<span class="ml-1 text-xs px-1.5 py-0.5 bg-purple-100 text-purple-800 rounded-full">AI</span>`;
+                    if (aiDifficulty) {
+                        playerTitle += `<span class="ml-1 text-xs px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded-full">${aiDifficulty}</span>`;
+                    }
+                }
+                if (isMe) {
+                    playerTitle += `<span class="ml-1 text-xs px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded-full">我</span>`;
+                }
+                
+                playerStat.innerHTML = `
+                    <div class="flex items-center justify-between mb-2">
+                        <h3 class="text-sm font-bold ${colors.text}">${playerTitle}</h3>
+                        <div class="${colors.color} text-white px-2 py-0.5 rounded-full font-bold text-xs">
+                            m = <span id="player${i}-m">8</span>
+                        </div>
+                    </div>
+                    <div class="text-base font-bold ${colors.text} mb-2">
+                        总金币: <span id="player${i}-gold" class="coin-animation">0</span>
+                    </div>
+                    <div class="flex space-x-1">
+                        <div class="w-2 h-2 bg-yellow-400 rounded-full"></div>
+                        <div class="w-2 h-2 bg-yellow-400 rounded-full"></div>
+                        <div class="w-2 h-2 bg-yellow-400 rounded-full"></div>
+                    </div>
+                `;
+                elements.playerStats.appendChild(playerStat);
+            }
+        }
+
+        // 更新UI
+        function updateUI() {
+            // 更新玩家m值和金币
+            for (let i = 1; i <= gameData.playerCount; i++) {
+                const mElement = document.getElementById(`player${i}-m`);
+                const goldElement = document.getElementById(`player${i}-gold`);
+                if (mElement) mElement.textContent = gameData.m[i - 1];
+                if (goldElement) goldElement.textContent = gameData.totalGold[i - 1];
+            }
+            
+            // 更新当前玩家显示
+            const colors = playerColors[gameData.currentPlayer];
+            const playerInfo = gameData.playerInfo[gameData.currentPlayer - 1];
+            let playerTitle = playerInfo && playerInfo.name ? playerInfo.name : `玩家${gameData.currentPlayer}`;
+            if (playerInfo && playerInfo.isAI) {
+                playerTitle += ' (AI)';
+            }
+            
+            // 检查是否是我的回合
+            const isMyTurn = gameData.gameMode === 'online' && 
+                            playerInfo && 
+                            playerInfo.id === gameData.socket?.id;
+            
+            elements.currentPlayer.innerHTML = `
+                <div class="inline-block ${colors.color} text-white px-6 py-3 rounded-full text-xl font-bold ${isMyTurn ? 'animate-pulse' : ''}">
+                    ${playerTitle}的回合${isMyTurn ? ' (轮到你)' : ''}
+                </div>
+            `;
+            
+            // 在线上模式中，如果不是我的回合，禁用操作按钮
+            if (gameData.gameMode === 'online') {
+                elements.rollDiceBtn.disabled = !isMyTurn;
+                elements.confirmBtn.disabled = !isMyTurn;
+                
+                if (!isMyTurn) {
+                    elements.rollDiceBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                    elements.confirmBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                } else {
+                    elements.rollDiceBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                    elements.confirmBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                }
+            }
+        }
+
+        // 渲染进度
+        function renderProgress() {
+            elements.progressContainer.innerHTML = '';
+            
+            for (let diceNum = 1; diceNum <= 6; diceNum++) {
+                const playerCounts = [];
+                for (let i = 1; i <= gameData.playerCount; i++) {
+                    playerCounts.push(gameData.playerDiceLists[i][diceNum].length);
+                }
+                
+                const baseList = gameData.baseDiceLists[diceNum];
+                const baseSum = baseList.reduce((a, b) => a + b, 0);
+                
+                // 计算最大数量用于进度条
+                const maxCount = Math.max(...playerCounts, 1);
+                
+                // 分析当前点数的金币分配情况
+                const currentGoldAllocation = analyzeGoldAllocation(diceNum, playerCounts);
+                
+                // 创建进度条元素
+                const progressItem = document.createElement('div');
+                progressItem.className = 'space-y-2';
+                
+                // 标题行
+                let progressHtml = `
+                    <div class="flex justify-between items-center">
+                        <h3 class="font-bold text-lg">点数 ${diceNum}</h3>
+                        <div class="text-sm">
+                            <span class="text-gray-600">基础金币: ${baseList.sort((a, b) => b - a).join(', ')}</span>
+                            ${currentGoldAllocation ? `<span class="text-gray-800 ml-2">(${currentGoldAllocation})</span>` : ''}
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-${gameData.playerCount} gap-4">
+                `;
+                
+                // 每个玩家的进度条
+                for (let i = 1; i <= gameData.playerCount; i++) {
+                    const count = playerCounts[i - 1];
+                    const width = (count / maxCount) * 100;
+                    const colors = playerColors[i];
+                    
+                    progressHtml += `
+                        <div>
+                            <div class="flex justify-between text-sm mb-1">
+                                <span class="font-medium ${colors.text}">玩家${i}</span>
+                                <span>${count} 个</span>
+                            </div>
+                            <div class="w-full bg-gray-200 rounded-full h-3">
+                                <div class="${colors.color} h-3 rounded-full progress-bar" style="--progress-width: ${width}%"></div>
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                progressHtml += `</div>`;
+                progressItem.innerHTML = progressHtml;
+                elements.progressContainer.appendChild(progressItem);
+            }
+        }
+        
+        // 分析当前点数的金币分配情况
+        function analyzeGoldAllocation(diceNum, playerCounts) {
+            // 统计每个数量出现的频次
+            const countFreq = {};
+            playerCounts.forEach(count => {
+                countFreq[count] = (countFreq[count] || 0) + 1;
+            });
+            
+            // 筛选有效玩家
+            const validPlayers = [];
+            playerCounts.forEach((count, index) => {
+                if (count > 0 && countFreq[count] === 1) {
+                    validPlayers.push({ count, playerIndex: index });
+                }
+            });
+            
+            if (validPlayers.length === 0) {
+                return '全部抵消';
+            }
+            
+            // 对有效玩家排序
+            validPlayers.sort((a, b) => {
+                if (b.count !== a.count) return b.count - a.count;
+                return a.playerIndex - b.playerIndex;
+            });
+            
+            const baseList = gameData.baseDiceLists[diceNum];
+            const sortedGold = [...baseList].sort((a, b) => b - a);
+            
+            if (validPlayers.length === 1) {
+                return `P${validPlayers[0].playerIndex + 1}领先得${sortedGold[0]}`;
+            } else {
+                return `P${validPlayers[0].playerIndex + 1}领先得${sortedGold[0]}`;
+            }
+        }
+
+        // 掷骰子
+        function rollDice() {
+            const currentM = gameData.m[gameData.currentPlayer - 1];
+            const playerInfo = gameData.playerInfo[gameData.currentPlayer - 1];
+            
+            if (currentM <= 0) {
+                showMessage(`玩家${gameData.currentPlayer}没有可用的骰子数！`);
+                nextPlayer();
+                return;
+            }
+            
+            // 生成随机骰子
+            gameData.tempDice = [];
+            for (let i = 0; i < currentM; i++) {
+                gameData.tempDice.push(Math.floor(Math.random() * 6) + 1);
+            }
+            
+            // 显示骰子结果
+            renderDiceRoll();
+            
+            // 如果是AI玩家，自动选择
+            if (playerInfo && playerInfo.isAI) {
+                showMessage(`AI玩家${gameData.currentPlayer}（${playerInfo.difficulty}难度）正在决策...`);
+                
+                // 延迟一秒后执行AI决策
+                setTimeout(() => {
+                    const aiDecision = aiChooseDiceAndCount(
+                        gameData.tempDice,
+                        playerInfo.difficulty,
+                        currentM
+                    );
+                    gameData.selectedDice = aiDecision.dice;
+                    gameData.selectedCount = aiDecision.count;
+                    
+                    showMessage(`AI选择了点数${gameData.selectedDice}，数量${gameData.selectedCount}`);
+                    
+                    // 延迟一秒后确认选择
+                    setTimeout(() => {
+                        confirmSelection();
+                    }, 1000);
+                }, 1000);
+            } else {
+                // 人类玩家，显示选择按钮
+                elements.rollDiceBtn.classList.add('hidden');
+                elements.selectionButtons.classList.remove('hidden');
+                
+                // 生成点数选择按钮
+                generateDiceSelection();
+            }
+        }
+        
+        // AI决策函数
+        function aiChooseDiceAndCount(tempList, difficulty, currentM) {
+            // 统计每个点数出现的次数
+            const diceCountDict = {};
+            tempList.forEach(dice => {
+                diceCountDict[dice] = (diceCountDict[dice] || 0) + 1;
+            });
+            
+            if (difficulty === "简单") {
+                // 简单难度：随机选择一个存在的点数，随机选择1到该点数总数之间的数量
+                const availableDices = Object.keys(diceCountDict).map(Number);
+                const chooseDice = availableDices[Math.floor(Math.random() * availableDices.length)];
+                const maxCount = diceCountDict[chooseDice];
+                const chooseCount = Math.floor(Math.random() * maxCount) + 1;
+                return { dice: chooseDice, count: chooseCount };
+            }
+            
+            else if (difficulty === "中等") {
+                // 中等难度：优先选择出现次数最多的点数，选择该点数的全部数量（最大化当前放入）
+                const maxCount = Math.max(...Object.values(diceCountDict));
+                const bestDices = Object.keys(diceCountDict)
+                    .map(Number)
+                    .filter(dice => diceCountDict[dice] === maxCount);
+                const chooseDice = bestDices[Math.floor(Math.random() * bestDices.length)];
+                const chooseCount = maxCount;
+                return { dice: chooseDice, count: chooseCount };
+            }
+            
+            else if (difficulty === "困难") {
+                // 困难难度：综合判断（1. 优先选出现次数多的 2. 参考基础金币价值 3. 保留少量m值灵活度）
+                const maxCount = Math.max(...Object.values(diceCountDict));
+                const bestDices = Object.keys(diceCountDict)
+                    .map(Number)
+                    .filter(dice => diceCountDict[dice] === maxCount);
+                
+                // 进一步筛选：基础金币总价值更高的点数
+                const diceGoldDict = {};
+                bestDices.forEach(dice => {
+                    const baseGold = gameData.baseDiceLists[dice];
+                    diceGoldDict[dice] = baseGold.reduce((a, b) => a + b, 0);
+                });
+                
+                // 选择基础金币总价值最高的点数
+                const maxGold = Math.max(...Object.values(diceGoldDict));
+                const bestGoldDices = Object.keys(diceGoldDict)
+                    .map(Number)
+                    .filter(dice => diceGoldDict[dice] === maxGold);
+                const chooseDice = bestGoldDices[Math.floor(Math.random() * bestGoldDices.length)];
+                let chooseCount = diceCountDict[chooseDice];
+                
+                // 保留1-2个m值（如果当前m值足够），增加后续回合灵活性
+                if (currentM - chooseCount >= 2 && chooseCount > 1) {
+                    chooseCount = Math.random() > 0.5 ? chooseCount - 1 : chooseCount;
+                }
+                
+                return { dice: chooseDice, count: chooseCount };
+            }
+            
+            // 默认回退到简单难度
+            return aiChooseDiceAndCount(tempList, "简单", currentM);
+        }
+
+        // 渲染骰子掷出结果
+        function renderDiceRoll() {
+            elements.diceRollResult.innerHTML = '';
+            
+            // 按点数分组并排序
+            const sortedDice = [...gameData.tempDice].sort((a, b) => a - b);
+            
+            sortedDice.forEach(dice => {
+                const diceColor = getDiceColor(dice);
+                const diceElement = document.createElement('div');
+                diceElement.className = `dice ${diceColor} dice-shadow text-white`;
+                diceElement.textContent = dice;
+                elements.diceRollResult.appendChild(diceElement);
+            });
+        }
+
+        // 获取骰子颜色
+        function getDiceColor(dice) {
+            const colors = {
+                1: 'bg-red-500',
+                2: 'bg-orange-500',
+                3: 'bg-yellow-500',
+                4: 'bg-green-500',
+                5: 'bg-blue-500',
+                6: 'bg-purple-500'
+            };
+            return colors[dice];
+        }
+
+        // 生成点数选择按钮
+        function generateDiceSelection() {
+            elements.diceSelection.innerHTML = '';
+            
+            // 获取唯一的点数
+            const uniqueDice = [...new Set(gameData.tempDice)].sort((a, b) => a - b);
+            
+            uniqueDice.forEach(dice => {
+                const count = gameData.tempDice.filter(d => d === dice).length;
+                const diceColor = getDiceColor(dice);
+                
+                const button = document.createElement('button');
+                button.className = `dice ${diceColor} dice-shadow text-white`;
+                button.textContent = dice;
+                button.title = `选择点数 ${dice} (数量: ${count})`;
+                
+                button.addEventListener('click', () => {
+                    selectDice(dice);
+                });
+                
+                elements.diceSelection.appendChild(button);
+            });
+        }
+
+        // 选择点数
+        function selectDice(dice) {
+            gameData.selectedDice = dice;
+            
+            // 更新按钮样式
+            const buttons = elements.diceSelection.querySelectorAll('button');
+            buttons.forEach(btn => {
+                btn.classList.remove('ring-4', 'ring-white');
+            });
+            
+            const selectedButton = elements.diceSelection.querySelector(`button:nth-child(${[...new Set(gameData.tempDice)].sort((a, b) => a - b).indexOf(dice) + 1})`);
+            if (selectedButton) {
+                selectedButton.classList.add('ring-4', 'ring-white');
+            }
+            
+            // 生成数量选择按钮
+            generateCountSelection();
+        }
+
+        // 生成数量选择按钮
+        function generateCountSelection() {
+            elements.countSelection.innerHTML = '';
+            
+            if (!gameData.selectedDice) return;
+            
+            const availableCount = gameData.tempDice.filter(d => d === gameData.selectedDice).length;
+            const currentM = gameData.m[gameData.currentPlayer - 1];
+            const maxCount = Math.min(availableCount, currentM);
+            
+            for (let i = 1; i <= maxCount; i++) {
+                const button = document.createElement('button');
+                button.className = 'px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-lg font-medium transition-colors';
+                button.textContent = i;
+                
+                button.addEventListener('click', () => {
+                    selectCount(i);
+                });
+                
+                elements.countSelection.appendChild(button);
+            }
+        }
+
+        // 选择数量
+        function selectCount(count) {
+            gameData.selectedCount = count;
+            
+            // 更新按钮样式
+            const buttons = elements.countSelection.querySelectorAll('button');
+            buttons.forEach(btn => {
+                btn.classList.remove('bg-primary', 'text-white');
+                btn.classList.add('bg-gray-200');
+            });
+            
+            const selectedButton = elements.countSelection.querySelector(`button:nth-child(${count})`);
+            if (selectedButton) {
+                selectedButton.classList.remove('bg-gray-200');
+                selectedButton.classList.add('bg-primary', 'text-white');
+            }
+        }
+
+        // 确认选择
+        function confirmSelection() {
+            if (!gameData.selectedDice || gameData.selectedCount === null) {
+                showMessage('请先选择点数和数量！');
+                return;
+            }
+            
+            const player = gameData.currentPlayer;
+            const dice = gameData.selectedDice;
+            const count = gameData.selectedCount;
+            
+            // 将选择的点数放入玩家专属列表
+            gameData.playerDiceLists[player][dice].push(...Array(count).fill(dice));
+            
+            // 更新玩家的m值
+            gameData.m[player - 1] -= count;
+            
+            // 实时计算金币（每回合更新）
+            calculateRealTimeGold();
+            
+            // 播放金币动画
+            playCoinAnimation();
+            
+            // 更新UI
+            updateUI();
+            renderProgress();
+            
+            // 重置临时数据
+            gameData.tempDice = [];
+            gameData.selectedDice = null;
+            gameData.selectedCount = null;
+            
+            // 隐藏选择按钮，显示掷骰子按钮
+            elements.rollDiceBtn.classList.remove('hidden');
+            elements.selectionButtons.classList.add('hidden');
+            elements.diceRollResult.innerHTML = '<div class="text-gray-400 italic">点击"掷骰子"按钮继续</div>';
+            
+            // 检查游戏是否结束
+            if (checkGameOver()) {
+                setTimeout(() => {
+                    calculateResults();
+                    showResultModal();
+                }, 1000);
+                return;
+            }
+            
+            // 切换到下一个玩家
+            nextPlayer();
+        }
+
+        // 切换到下一个玩家
+        function nextPlayer() {
+            // 检查是否所有玩家都没有骰子数
+            if (checkGameOver()) {
+                setTimeout(() => {
+                    calculateResults();
+                    showResultModal();
+                }, 1000);
+                return;
+            }
+            
+            let nextPlayer = gameData.currentPlayer + 1;
+            if (nextPlayer > gameData.playerCount) {
+                nextPlayer = 1;
+            }
+            
+            // 循环查找有骰子数的玩家
+            let originalNextPlayer = nextPlayer;
+            while (gameData.m[nextPlayer - 1] <= 0) {
+                nextPlayer++;
+                if (nextPlayer > gameData.playerCount) {
+                    nextPlayer = 1;
+                }
+                
+                // 如果回到了起点，说明所有玩家都没有骰子数
+                if (nextPlayer === originalNextPlayer) {
+                    // 游戏结束
+                    setTimeout(() => {
+                        calculateResults();
+                        showResultModal();
+                    }, 1000);
+                    return;
+                }
+            }
+            
+            gameData.currentPlayer = nextPlayer;
+            updateUI();
+            
+            // 如果跳过了至少一个玩家，显示消息
+            if (nextPlayer !== originalNextPlayer) {
+                showMessage(`跳过没有骰子数的玩家，切换到玩家${nextPlayer}的回合！`);
+            }
+            
+            // 检查是否是AI玩家，如果是则自动开始回合
+            checkAndStartAiTurn();
+        }
+
+        // 检查游戏是否结束
+        function checkGameOver() {
+            return gameData.m.every(m => m <= 0);
+        }
+
+        // 实时计算金币（每回合更新）
+        function calculateRealTimeGold() {
+            gameData.totalGold = Array(gameData.playerCount).fill(0);
+            
+            for (let diceNum = 1; diceNum <= 6; diceNum++) {
+                // 获取所有玩家的数量
+                const playerCounts = [];
+                for (let i = 1; i <= gameData.playerCount; i++) {
+                    playerCounts.push(gameData.playerDiceLists[i][diceNum].length);
+                }
+                
+                const baseGoldList = gameData.baseDiceLists[diceNum];
+                const sortedGold = [...baseGoldList].sort((a, b) => b - a);
+                const bigGold = sortedGold[0];
+                const smallGold = sortedGold[1];
+                
+                // 统计每个数量出现的频次
+                const countFreq = {};
+                playerCounts.forEach(count => {
+                    countFreq[count] = (countFreq[count] || 0) + 1;
+                });
+                
+                // 筛选有效玩家（数量>0且该数量出现频次=1）
+                const validPlayers = [];
+                playerCounts.forEach((count, index) => {
+                    if (count > 0 && countFreq[count] === 1) {
+                        validPlayers.push({ count, playerIndex: index });
+                    }
+                });
+                
+                // 对有效玩家排序
+                validPlayers.sort((a, b) => {
+                    if (b.count !== a.count) {
+                        return b.count - a.count; // 数量降序
+                    }
+                    return a.playerIndex - b.playerIndex; // 玩家编号升序
+                });
+                
+                // 分配金币
+                if (validPlayers.length === 0) {
+                    // 无有效玩家
+                } else if (validPlayers.length === 1) {
+                    // 只有一个有效玩家，获得大金币
+                    gameData.totalGold[validPlayers[0].playerIndex] += bigGold;
+                } else {
+                    // 多个有效玩家，前两名分大小金币
+                    gameData.totalGold[validPlayers[0].playerIndex] += bigGold;
+                    gameData.totalGold[validPlayers[1].playerIndex] += smallGold;
+                }
+            }
+        }
+
+        // 计算游戏结果（最终结算）
+        function calculateResults() {
+            // 调用实时计算函数进行最终结算
+            calculateRealTimeGold();
+            
+            // 更新UI
+            updateUI();
+        }
+
+        // 显示结果弹窗
+        function showResultModal() {
+            // 生成计算过程
+            generateCalculationProcess();
+            
+            // 生成最终结果
+            generateFinalResults();
+            
+            // 显示弹窗
+            elements.resultModal.classList.remove('hidden');
+            
+            // 添加动画效果
+            setTimeout(() => {
+                elements.modalContent.classList.remove('scale-95', 'opacity-0');
+                elements.modalContent.classList.add('scale-100', 'opacity-100');
+            }, 10);
+        }
+
+        // 生成计算过程
+        function generateCalculationProcess() {
+            elements.calculationBody.innerHTML = '';
+            
+            for (let diceNum = 1; diceNum <= 6; diceNum++) {
+                const playerCounts = [];
+                for (let i = 1; i <= gameData.playerCount; i++) {
+                    playerCounts.push(gameData.playerDiceLists[i][diceNum].length);
+                }
+                
+                const baseGoldList = gameData.baseDiceLists[diceNum];
+                const sortedGold = [...baseGoldList].sort((a, b) => b - a);
+                
+                // 统计频次并筛选有效玩家
+                const countFreq = {};
+                playerCounts.forEach(count => {
+                    countFreq[count] = (countFreq[count] || 0) + 1;
+                });
+                
+                const validPlayers = [];
+                playerCounts.forEach((count, index) => {
+                    if (count > 0 && countFreq[count] === 1) {
+                        validPlayers.push({ count, playerIndex: index });
+                    }
+                });
+                
+                validPlayers.sort((a, b) => {
+                    if (b.count !== a.count) return b.count - a.count;
+                    return a.playerIndex - b.playerIndex;
+                });
+                
+                // 生成分配描述
+                let allocation = '';
+                if (validPlayers.length === 0) {
+                    allocation = '全部抵消';
+                } else if (validPlayers.length === 1) {
+                    allocation = `P${validPlayers[0].playerIndex + 1}得${sortedGold[0]}`;
+                } else {
+                    allocation = `P${validPlayers[0].playerIndex + 1}得${sortedGold[0]}, P${validPlayers[1].playerIndex + 1}得${sortedGold[1]}`;
+                }
+                
+                // 创建表格行
+                const row = document.createElement('tr');
+                row.className = 'border-b';
+                
+                let rowHtml = `<td class="py-2 font-medium">${diceNum}</td>`;
+                
+                // 每个玩家的数量
+                for (let i = 0; i < 4; i++) {
+                    if (i < gameData.playerCount) {
+                        rowHtml += `<td class="py-2 text-center">${playerCounts[i]}个</td>`;
+                    } else {
+                        rowHtml += `<td class="py-2 text-center">-</td>`;
+                    }
+                }
+                
+                rowHtml += `
+                    <td class="py-2 text-center">${sortedGold.join(', ')}</td>
+                    <td class="py-2 text-center">${allocation}</td>
+                `;
+                
+                row.innerHTML = rowHtml;
+                elements.calculationBody.appendChild(row);
+            }
+        }
+
+        // 生成最终结果
+        function generateFinalResults() {
+            elements.finalResults.innerHTML = '';
+            
+            // 找出获胜者
+            const maxGold = Math.max(...gameData.totalGold);
+            const winners = gameData.totalGold.map((gold, index) => ({
+                player: index + 1,
+                gold: gold,
+                isWinner: gold === maxGold
+            }));
+            
+            // 按金币降序排序
+            winners.sort((a, b) => b.gold - a.gold);
+            
+            winners.forEach(winner => {
+                const colors = playerColors[winner.player];
+                const resultElement = document.createElement('div');
+                resultElement.className = `p-4 rounded-lg border-2 ${colors.border} ${colors.bg} ${winner.isWinner ? 'ring-4 ring-yellow-400' : ''}`;
+                resultElement.innerHTML = `
+                    <h3 class="text-lg font-bold ${colors.text} mb-2">玩家${winner.player}</h3>
+                    <div class="text-3xl font-bold ${colors.text}">${winner.gold}</div>
+                    ${winner.isWinner ? '<div class="text-sm text-yellow-600 font-bold mt-1">🎉 获胜</div>' : ''}
+                `;
+                elements.finalResults.appendChild(resultElement);
+            });
+            
+            // 设置标题
+            if (winners.filter(w => w.isWinner).length === 1) {
+                elements.resultTitle.textContent = `🎉 玩家${winners[0].player}获胜！`;
+                elements.resultTitle.className = `text-3xl font-bold mb-6 ${playerColors[winners[0].player].text}`;
+            } else {
+                const winnerPlayers = winners.filter(w => w.isWinner).map(w => w.player).join(', ');
+                elements.resultTitle.textContent = `🤝 玩家${winnerPlayers}并列胜利！`;
+                elements.resultTitle.className = 'text-3xl font-bold mb-6 text-gray-600';
+            }
+        }
+
+        // 播放金币动画
+        function playCoinAnimation() {
+            const goldElement = document.getElementById(`player${gameData.currentPlayer}-gold`);
+            if (goldElement) {
+                goldElement.classList.remove('coin-animation');
+                void goldElement.offsetWidth; // 触发重排
+                goldElement.classList.add('coin-animation');
+            }
+        }
+
+        // 显示消息
+        function showMessage(message) {
+            const messageElement = document.createElement('div');
+            messageElement.className = 'fixed top-4 right-4 bg-gray-800 text-white px-6 py-3 rounded-lg shadow-lg z-50 transform translate-x-full transition-transform duration-300';
+            messageElement.textContent = message;
+            
+            document.body.appendChild(messageElement);
+            
+            setTimeout(() => {
+                messageElement.classList.remove('translate-x-full');
+            }, 10);
+            
+            setTimeout(() => {
+                messageElement.classList.add('translate-x-full');
+                setTimeout(() => {
+                    document.body.removeChild(messageElement);
+                }, 300);
+            }, 3000);
+        }
+
+        // 事件监听
+        function setupEventListeners() {
+            // 模式选择按钮
+            elements.localModeBtn.addEventListener('click', () => {
+                gameData.gameMode = 'local';
+                elements.modeSelectModal.classList.add('hidden');
+                
+                // 显示人数选择弹窗
+                setTimeout(() => {
+                    elements.playerCountModal.classList.remove('hidden');
+                    const modalContent = elements.playerCountModal.querySelector('div');
+                    modalContent.classList.remove('scale-95', 'opacity-0');
+                    modalContent.classList.add('scale-100', 'opacity-100');
+                }, 300);
+            });
+            
+            elements.onlineModeBtn.addEventListener('click', () => {
+                gameData.gameMode = 'online';
+                showOnlineRoomModal();
+            });
+            
+            // 线上模式房间管理按钮
+            elements.createRoomBtn.addEventListener('click', () => {
+                // 默认创建4人房间
+                gameData.socket.emit('create_room', { playerCount: 4 });
+            });
+            
+            elements.joinRoomBtn.addEventListener('click', () => {
+                const roomCode = elements.roomCodeInput.value.trim().toUpperCase();
+                if (roomCode) {
+                    // 检查是否已经在其他房间内
+                    if (gameData.roomCode && gameData.roomCode !== roomCode) {
+                        showMessage('您已经在一个房间内，请先离开当前房间');
+                        return;
+                    }
+                    
+                    // 如果是同一个房间，不重复加入
+                    if (gameData.roomCode === roomCode) {
+                        showMessage('您已经在这个房间内');
+                        return;
+                    }
+                    
+                    gameData.socket.emit('join_room', { roomCode });
+                } else {
+                    showMessage('请输入房间代码');
+                }
+            });
+            
+            elements.startOnlineGameBtn.addEventListener('click', () => {
+                if (gameData.isHost && gameData.roomCode) {
+                    gameData.socket.emit('start_game', { roomCode: gameData.roomCode });
+                }
+            });
+            
+            // 离开房间按钮
+            elements.leaveRoomBtn.addEventListener('click', () => {
+                if (gameData.roomCode) {
+                    gameData.socket.emit('leave_room', { roomCode: gameData.roomCode });
+                    gameData.roomCode = null;
+                    gameData.isHost = false;
+                    gameData.connectedPlayers = [];
+                    
+                    // 隐藏房间信息
+                    elements.myRoomInfo.classList.add('hidden');
+                    
+                    // 清空输入框
+                    elements.roomCodeInput.value = '';
+                    
+                    showMessage('您已离开房间');
+                }
+            });
+            
+            elements.backToModeBtn.addEventListener('click', () => {
+                // 离开当前房间
+                if (gameData.roomCode) {
+                    gameData.socket.emit('leave_room', { roomCode: gameData.roomCode });
+                    gameData.roomCode = null;
+                    gameData.isHost = false;
+                    gameData.connectedPlayers = [];
+                    
+                    // 隐藏房间信息
+                    elements.myRoomInfo.classList.add('hidden');
+                    
+                    // 清空输入框
+                    elements.roomCodeInput.value = '';
+                }
+                
+                // 返回模式选择
+                elements.onlineRoomModal.classList.add('hidden');
+                elements.modeSelectModal.classList.remove('hidden');
+            });
+            
+            // 定期刷新房间列表
+            setInterval(() => {
+                if (elements.onlineRoomModal.classList.contains('hidden') === false) {
+                    refreshRoomList();
+                }
+            }, 5000);
+            
+            // 人数选择按钮
+            elements.playerCountBtns.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    gameData.playerCount = parseInt(btn.dataset.count);
+                    
+                    // 隐藏弹窗并添加动画
+                    const modalContent = elements.playerCountModal.querySelector('div');
+                    modalContent.classList.remove('scale-100', 'opacity-100');
+                    modalContent.classList.add('scale-95', 'opacity-0');
+                    
+                    setTimeout(() => {
+                        elements.playerCountModal.classList.add('hidden');
+                        initGame();
+                    }, 300);
+                });
+            });
+            
+            // AI设置按钮
+            elements.humanBtn.addEventListener('click', () => {
+                gameData.playerInfo.push({
+                    playerNum: gameData.currentSetupPlayer,
+                    isAI: false,
+                    difficulty: null
+                });
+                
+                if (gameData.currentSetupPlayer < gameData.playerCount) {
+                    gameData.currentSetupPlayer++;
+                    showAiSetupModal();
+                } else {
+                    completeAiSetup();
+                }
+            });
+            
+            elements.aiEasyBtn.addEventListener('click', () => {
+                gameData.playerInfo.push({
+                    playerNum: gameData.currentSetupPlayer,
+                    isAI: true,
+                    difficulty: "简单"
+                });
+                
+                if (gameData.currentSetupPlayer < gameData.playerCount) {
+                    gameData.currentSetupPlayer++;
+                    showAiSetupModal();
+                } else {
+                    completeAiSetup();
+                }
+            });
+            
+            elements.aiMediumBtn.addEventListener('click', () => {
+                gameData.playerInfo.push({
+                    playerNum: gameData.currentSetupPlayer,
+                    isAI: true,
+                    difficulty: "中等"
+                });
+                
+                if (gameData.currentSetupPlayer < gameData.playerCount) {
+                    gameData.currentSetupPlayer++;
+                    showAiSetupModal();
+                } else {
+                    completeAiSetup();
+                }
+            });
+            
+            elements.aiHardBtn.addEventListener('click', () => {
+                gameData.playerInfo.push({
+                    playerNum: gameData.currentSetupPlayer,
+                    isAI: true,
+                    difficulty: "困难"
+                });
+                
+                if (gameData.currentSetupPlayer < gameData.playerCount) {
+                    gameData.currentSetupPlayer++;
+                    showAiSetupModal();
+                } else {
+                    completeAiSetup();
+                }
+            });
+            
+            // 游戏操作按钮
+            elements.rollDiceBtn.addEventListener('click', rollDice);
+            elements.confirmBtn.addEventListener('click', confirmSelection);
+            elements.newGameBtn.addEventListener('click', () => {
+                elements.resultModal.classList.add('hidden');
+                
+                if (gameData.gameMode === 'online') {
+                    // 线上模式返回房间管理
+                    elements.modeSelectModal.classList.remove('hidden');
+                } else {
+                    // 本地模式显示人数选择
+                    elements.playerCountModal.classList.remove('hidden');
+                    const modalContent = elements.playerCountModal.querySelector('div');
+                    modalContent.classList.remove('scale-95', 'opacity-0');
+                    modalContent.classList.add('scale-100', 'opacity-100');
+                }
+            });
+        }
+
+        // 初始化Socket.IO连接（模拟环境）
+        function initSocket() {
+            // 在实际环境中，这里应该连接到真实的服务器
+            // gameData.socket = io('https://your-game-server.com');
+            
+            // 模拟Socket.IO对象
+            gameData.socket = {
+                id: 'socket_' + Math.random().toString(36).substr(2, 9),
+                connected: true,
+                emit: function(event, data) {
+                    console.log('Socket emit:', event, data);
+                    // 模拟服务器响应
+                    setTimeout(() => {
+                        handleSocketResponse(event, data);
+                    }, 100);
+                },
+                on: function(event, callback) {
+                    console.log('Socket on:', event);
+                    this._listeners = this._listeners || {};
+                    this._listeners[event] = callback;
+                },
+                _trigger: function(event, data) {
+                    console.log('Socket trigger:', event, data);
+                    if (this._listeners && this._listeners[event]) {
+                        this._listeners[event](data);
+                    }
+                }
+            };
+            
+            // 模拟房间数据
+            window.mockRooms = {};
+            window.mockRoomList = [];
+            
+            // 启动房间清理定时器
+            startRoomCleanup();
+            
+            console.log('Socket.IO连接初始化完成（模拟环境）');
+        }
+        
+        // 启动房间清理定时器
+        function startRoomCleanup() {
+            // 每30秒清理一次空房间
+            setInterval(() => {
+                cleanupEmptyRooms();
+            }, 30000);
+        }
+        
+        // 清理空房间
+        function cleanupEmptyRooms() {
+            const roomsToDelete = [];
+            
+            // 检查所有房间
+            for (const roomCode in window.mockRooms) {
+                const room = window.mockRooms[roomCode];
+                // 如果房间为空或所有玩家都已离开，标记为删除
+                if (room.players.length === 0) {
+                    roomsToDelete.push(roomCode);
+                }
+            }
+            
+            // 删除空房间
+            roomsToDelete.forEach(roomCode => {
+                delete window.mockRooms[roomCode];
+                window.mockRoomList = window.mockRoomList.filter(r => r.code !== roomCode);
+                console.log(`清理空房间: ${roomCode}`);
+            });
+            
+            // 如果当前显示的是房间列表，刷新列表
+            if (elements.onlineRoomModal.classList.contains('hidden') === false) {
+                refreshRoomList();
+            }
+        }
+        
+        // 处理Socket响应（模拟服务器逻辑）
+        function handleSocketResponse(event, data) {
+            const socket = gameData.socket;
+            
+            switch (event) {
+                case 'create_room':
+                    // 创建房间
+                    const roomCode = generateRoomCode();
+                    const room = {
+                        code: roomCode,
+                        host: socket.id,
+                        players: [{ id: socket.id, name: '玩家1', isHost: true }],
+                        status: 'waiting',
+                        playerCount: data.playerCount || 2
+                    };
+                    window.mockRooms[roomCode] = room;
+                    window.mockRoomList.push(room);
+                    
+                    // 触发房间创建成功事件
+                    socket._trigger('room_created', { roomCode, room });
+                    break;
+                    
+                case 'join_room':
+                    // 加入房间
+                    const roomToJoin = window.mockRooms[data.roomCode];
+                    if (roomToJoin && roomToJoin.status === 'waiting') {
+                        const playerId = socket.id;
+                        const playerName = '玩家' + (roomToJoin.players.length + 1);
+                        const player = { id: playerId, name: playerName, isHost: false };
+                        
+                        roomToJoin.players.push(player);
+                        
+                        // 触发加入成功事件
+                        socket._trigger('room_joined', { roomCode: data.roomCode, room: roomToJoin });
+                        
+                        // 通知房间内其他玩家
+                        roomToJoin.players.forEach(p => {
+                            if (p.id !== playerId) {
+                                // 模拟其他玩家收到新玩家加入的通知
+                                console.log('通知玩家', p.id, '有新玩家加入');
+                            }
+                        });
+                    } else {
+                        socket._trigger('join_failed', { error: '房间不存在或已满' });
+                    }
+                    break;
+                    
+                case 'leave_room':
+                    // 离开房间
+                    const roomToLeave = window.mockRooms[data.roomCode];
+                    if (roomToLeave) {
+                        const playerIndex = roomToLeave.players.findIndex(p => p.id === socket.id);
+                        if (playerIndex !== -1) {
+                            const isHost = roomToLeave.players[playerIndex].isHost;
+                            roomToLeave.players.splice(playerIndex, 1);
+                            
+                            // 如果房主离开，重新分配房主
+                            if (isHost && roomToLeave.players.length > 0) {
+                                roomToLeave.players[0].isHost = true;
+                            }
+                            
+                            // 如果房间为空，删除房间
+                            if (roomToLeave.players.length === 0) {
+                                delete window.mockRooms[data.roomCode];
+                                window.mockRoomList = window.mockRoomList.filter(r => r.code !== data.roomCode);
+                            }
+                            
+                            socket._trigger('room_left', { roomCode: data.roomCode });
+                        }
+                    }
+                    break;
+                    
+                case 'start_game':
+                    // 开始游戏
+                    const roomToStart = window.mockRooms[data.roomCode];
+                    if (roomToStart && roomToStart.status === 'waiting') {
+                        roomToStart.status = 'playing';
+                        
+                        // 通知所有玩家游戏开始
+                        roomToStart.players.forEach(p => {
+                            // 模拟玩家收到游戏开始的通知
+                            console.log('通知玩家', p.id, '游戏开始');
+                        });
+                        
+                        socket._trigger('game_started', { roomCode: data.roomCode, room: roomToStart });
+                    }
+                    break;
+                    
+                case 'get_rooms':
+                    // 获取房间列表
+                    const availableRooms = window.mockRoomList.filter(r => r.status === 'waiting');
+                    socket._trigger('rooms_list', { rooms: availableRooms });
+                    break;
+            }
+        }
+        
+        // 生成房间代码
+        function generateRoomCode() {
+            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+            let code = '';
+            for (let i = 0; i < 6; i++) {
+                code += chars.charAt(Math.floor(Math.random() * chars.length));
+            }
+            return code;
+        }
+        
+        // 显示线上房间管理界面
+        function showOnlineRoomModal() {
+            elements.modeSelectModal.classList.add('hidden');
+            elements.onlineRoomModal.classList.remove('hidden');
+            
+            setTimeout(() => {
+                const modalContent = elements.onlineRoomModal.querySelector('div');
+                modalContent.classList.remove('scale-95', 'opacity-0');
+                modalContent.classList.add('scale-100', 'opacity-100');
+            }, 10);
+            
+            // 初始化Socket连接
+            if (!gameData.socket) {
+                initSocket();
+                setupSocketListeners();
+            }
+            
+            // 获取房间列表
+            refreshRoomList();
+        }
+        
+        // 刷新房间列表
+        function refreshRoomList() {
+            if (gameData.socket) {
+                gameData.socket.emit('get_rooms');
+            }
+        }
+        
+        // 设置Socket监听器
+        function setupSocketListeners() {
+            const socket = gameData.socket;
+            
+            // 房间创建成功
+            socket.on('room_created', (data) => {
+                gameData.roomCode = data.roomCode;
+                gameData.isHost = true;
+                gameData.connectedPlayers = data.room.players;
+                
+                // 显示我的房间信息
+                elements.myRoomInfo.classList.remove('hidden');
+                elements.myRoomCode.textContent = data.roomCode;
+                elements.roomPlayersCount.textContent = data.room.players.length;
+                
+                showMessage(`房间创建成功！房间代码：${data.roomCode}`);
+            });
+            
+            // 房间加入成功
+            socket.on('room_joined', (data) => {
+                gameData.roomCode = data.roomCode;
+                gameData.isHost = data.room.players.find(p => p.id === socket.id)?.isHost || false;
+                gameData.connectedPlayers = data.room.players;
+                
+                // 显示我的房间信息
+                elements.myRoomInfo.classList.remove('hidden');
+                elements.myRoomCode.textContent = data.roomCode;
+                elements.roomPlayersCount.textContent = data.room.players.length;
+                
+                // 只有房主可以开始游戏
+                elements.startOnlineGameBtn.disabled = !gameData.isHost;
+                
+                showMessage(`成功加入房间！房间代码：${data.roomCode}`);
+            });
+            
+            // 加入房间失败
+            socket.on('join_failed', (data) => {
+                showMessage(`加入房间失败：${data.error}`);
+            });
+            
+            // 房间列表更新
+            socket.on('rooms_list', (data) => {
+                const roomList = data.rooms || [];
+                const roomListHtml = roomList.length > 0 
+                    ? roomList.map(room => `
+                        <div class="flex justify-between items-center p-2 hover:bg-gray-100 rounded cursor-pointer room-item" data-code="${room.code}">
+                            <span>房间 ${room.code}</span>
+                            <span class="text-sm text-gray-500">${room.players.length}/${room.playerCount}人</span>
+                        </div>
+                    `).join('')
+                    : '<div class="text-gray-400 italic text-sm">暂无可用房间</div>';
+                
+                elements.roomList.innerHTML = roomListHtml;
+                
+                // 添加房间点击事件
+                document.querySelectorAll('.room-item').forEach(item => {
+                    item.addEventListener('click', () => {
+                        const roomCode = item.dataset.code;
+                        elements.roomCodeInput.value = roomCode;
+                    });
+                });
+            });
+            
+            // 玩家加入房间
+            socket.on('player_joined', (data) => {
+                gameData.connectedPlayers = data.players;
+                elements.roomPlayersCount.textContent = data.players.length;
+                showMessage(`玩家${data.player.name}加入了房间`);
+            });
+            
+            // 玩家离开房间
+            socket.on('player_left', (data) => {
+                gameData.connectedPlayers = data.players;
+                elements.roomPlayersCount.textContent = data.players.length;
+                showMessage(`玩家${data.player.name}离开了房间`);
+            });
+            
+            // 游戏开始
+            socket.on('game_started', (data) => {
+                showMessage('游戏开始！');
+                
+                // 隐藏房间管理界面，开始游戏
+                elements.onlineRoomModal.classList.add('hidden');
+                
+                // 设置游戏模式为线上
+                gameData.gameMode = 'online';
+                gameData.playerCount = data.room.players.length;
+                
+                // 初始化游戏
+                initOnlineGame();
+            });
+        }
+        
+        // 初始化线上游戏
+        function initOnlineGame() {
+            // 重置游戏数据
+            gameData.baseDiceLists = { 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] };
+            gameData.playerDiceLists = {};
+            gameData.playerInfo = [];
+            gameData.m = [];
+            gameData.totalGold = [];
+            
+            // 设置玩家信息
+            gameData.connectedPlayers.forEach((player, index) => {
+                gameData.playerInfo.push({
+                    playerNum: index + 1,
+                    isAI: false,
+                    difficulty: null,
+                    name: player.name,
+                    id: player.id
+                });
+                gameData.playerDiceLists[index + 1] = { 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] };
+                gameData.m.push(8);
+                gameData.totalGold.push(0);
+            });
+            
+            gameData.currentPlayer = 1;
+            gameData.gameOver = false;
+            gameData.tempDice = [];
+            gameData.selectedDice = null;
+            gameData.selectedCount = null;
+            
+            // 生成基础金币
+            const goldPerList = 2;
+            const minGold = 3;
+            const maxGold = 8;
+
+            for (let diceNum = 1; diceNum <= 6; diceNum++) {
+                for (let i = 0; i < goldPerList; i++) {
+                    const gold = Math.floor(Math.random() * (maxGold - minGold + 1)) + minGold;
+                    gameData.baseDiceLists[diceNum].push(gold);
+                }
+            }
+
+            // 更新UI
+            renderPlayerStats();
+            updateUI();
+            renderProgress();
+            
+            // 显示初始状态
+            elements.rollDiceBtn.classList.remove('hidden');
+            elements.selectionButtons.classList.add('hidden');
+            elements.diceRollResult.innerHTML = '<div class="text-gray-400 italic">点击"掷骰子"按钮开始</div>';
+            
+            // 显示游戏说明
+            showMessage(`线上游戏开始！当前${gameData.playerCount}人游戏`);
+            
+            // 如果是我的回合，自动开始
+            const myPlayerInfo = gameData.playerInfo.find(p => p.id === gameData.socket.id);
+            if (myPlayerInfo && myPlayerInfo.playerNum === gameData.currentPlayer) {
+                checkAndStartAiTurn();
+            }
+        }
+
+        // 初始化
+        function init() {
+            setupEventListeners();
+        }
+
+        // 启动游戏
+        init();
+    </script>
+
+</body>
+</html>
